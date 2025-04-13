@@ -369,7 +369,7 @@ struct ContentView: View {
     }
 }
 
-@main
+//@main
 @available(macOS 13.0, *)
 struct PDF2ZHApp: App {
     var body: some Scene {
