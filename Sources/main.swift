@@ -262,7 +262,7 @@ struct ContentView: View {
                 VStack {
                     Text("pdf2zh is not installed")
                         .font(.headline)
-                    Button("Install PDFMath Translate") {
+                    Button("Install PDFMath Translate (alpha)") {
                         processor.openGitHub()
                     }
                 }
