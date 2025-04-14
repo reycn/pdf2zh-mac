@@ -1,64 +1,5 @@
-// The Swift Programming Language
-// https://docs.swift.org/swift-book
-
 import SwiftUI
 import Foundation
-import ArgumentParser
-import UniformTypeIdentifiers
-
-@available(macOS 13.0, *)
-struct FileDropView: View {
-    @Binding var showFilePicker: Bool
-    @ObservedObject var processor: PDFProcessor
-    @State private var isTargeted = false
-    
-    var body: some View {
-        VStack(spacing: 24) {
-            Button(action: { showFilePicker = true }) {
-                HStack {
-                    Image(systemName: "doc.fill")
-                    Text("Select PDF File")
-                }
-                .padding()
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(processor.isProcessing)
-            
-            Text("or")
-                .foregroundColor(.secondary)
-            
-            Text("Drag and drop PDF file here")
-                .padding()
-                .frame(maxWidth: .infinity)
-                .frame(height: 200)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isTargeted ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isTargeted ? Color.blue : Color.gray, style: StrokeStyle(lineWidth: 2, dash: [5]))
-                )
-                .onDrop(of: [.pdf], isTargeted: $isTargeted) { providers, _ in
-                    guard let provider = providers.first else { return false }
-                    
-                    provider.loadItem(forTypeIdentifier: UTType.pdf.identifier, options: nil) { item, error in
-                        if let url = item as? URL {
-                            Task { @MainActor in
-                                processor.selectedFile = url
-                                processor.processPDF()
-                            }
-                        }
-                    }
-                    return true
-                }
-        }
-        .padding()
-        .opacity(processor.selectedFile == nil ? 1 : 0)
-        .animation(.easeInOut, value: processor.selectedFile)
-    }
-}
 
 @available(macOS 13.0, *)
 final class PDFProcessor: ObservableObject, @unchecked Sendable {
@@ -66,6 +7,8 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     @Published var isProcessing: Bool = false
     @Published var selectedFile: URL?
     @Published var outputFile: URL?
+    @Published var inputPreviewURL: URL?
+    @Published var outputPreviewURL: URL?
     @Published var progress: Double = 0.0
     @Published var progressText: String = ""
     @Published var showOutput: Bool = false
@@ -140,6 +83,19 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         return line.contains("error") || line.contains("Error") || !hasProgress
     }
     
+    private func formatOutputLine(_ line: String) -> String {
+        if line.contains("error") || line.contains("Error") {
+            return "[Error] \(line)"
+        } else if line.contains("warning") || line.contains("Warning") {
+            return "[Warning] \(line)"
+        } else if line.contains("Processing completed successfully!") {
+            return "[Success] \(line)"
+        } else if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "[Message] \(line)"
+        }
+        return line
+    }
+    
     func checkPDF2ZH() -> Bool {
         let process = Process()
         process.launchPath = "/usr/bin/which"
@@ -181,6 +137,9 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         startTime = Date()
         lastProgressUpdate = nil
         
+        // Set input preview URL
+        inputPreviewURL = fileURL
+        
         let process = Process()
         process.launchPath = "/bin/zsh"
         process.arguments = ["-c", "pdf2zh \"\(filePath)\" -o \"\(fileDir)\" "]
@@ -197,7 +156,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
                     guard let self = self else { return }
                     self.queue.sync {
                         if self.shouldShowOutput(line) {
-                            self.outputText += line
+                            self.outputText += self.formatOutputLine(line)
                             self.showOutput = true
                         }
                         if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
@@ -221,14 +180,15 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
                     if process.terminationStatus == 0 {
                         let outputPath = "\(fileDir)/\(outputFileName)"
                         self.outputFile = URL(fileURLWithPath: outputPath)
+                        self.outputPreviewURL = self.outputFile
                         if !self.showOutput {
-                            self.outputText = "Processing completed successfully!\n"
+                            self.outputText = "[Success] Processing completed successfully!\n"
                             self.showOutput = true
                         }
                         self.progress = 1.0
                         self.progressText = "Completed"
                     } else {
-                        self.outputText += "\nProcessing failed with exit code: \(process.terminationStatus)\n"
+                        self.outputText += "\n[Error] Processing failed with exit code: \(process.terminationStatus)\n"
                         self.showOutput = true
                     }
                 }
@@ -238,7 +198,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         do {
             try process.run()
         } catch {
-            outputText = "Error: \(error.localizedDescription)\n"
+            outputText = "[Error] \(error.localizedDescription)\n"
             showOutput = true
             isProcessing = false
         }
@@ -249,122 +209,18 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             NSWorkspace.shared.open(outputFile)
         }
     }
-}
-
-@available(macOS 13.0, *)
-struct ContentView: View {
-    @StateObject private var processor = PDFProcessor()
-    @State private var showFilePicker = false
     
-    var body: some View {
-        VStack(spacing: 24) {
-            if !processor.checkPDF2ZH() {
-                VStack {
-                    Text("pdf2zh is not installed")
-                        .font(.headline)
-                    Button("Install PDFMath Translate (alpha)") {
-                        processor.openGitHub()
-                    }
-                }
-                .padding()
-            } else {
-                if processor.selectedFile == nil {
-                    FileDropView(showFilePicker: $showFilePicker, processor: processor)
-                }
-                
-                // Progress bar section - always show when processing
-                if processor.isProcessing {
-                    ProgressView(value: processor.progress) {
-                        HStack {
-                            Text("Processing: \(processor.progressText)")
-                                .font(.caption)
-                            Spacer()
-                            HStack(spacing: 4) {
-                                if !processor.estimatedTimeRemaining.isEmpty {
-                                    Text("ETA: \(processor.estimatedTimeRemaining)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Text("\(Int(processor.progress * 100))%")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    .progressViewStyle(.linear)
-                    .tint(.blue)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .animation(.easeInOut, value: processor.progress)
-                    .transition(.opacity)
-                }
-                
-                // Output text section - controlled by showOutput
-                if processor.showOutput {
-                    ScrollView {
-                        Text(processor.outputText)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                    }
-                    .frame(height: 200)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
-                }
-                
-                if processor.outputFile != nil {
-                    HStack(spacing: 8) {
-                        Button(action: {
-                            processor.openOutputFile()
-                        }) {
-                            HStack {
-                                Image(systemName: "doc.fill")
-                                Text("Open Output File (dual)")
-                            }
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(processor.isProcessing)
-                        
-                        Button(action: {
-                            if let outputFile = processor.outputFile {
-                                let monoPath = outputFile.path.replacingOccurrences(of: "-dual.pdf", with: "-mono.pdf")
-                                let monoURL = URL(fileURLWithPath: monoPath)
-                                NSWorkspace.shared.open(monoURL)
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "doc.fill")
-                                Text("Open Output File (mono)")
-                            }
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(processor.isProcessing)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal)
-        .frame(minWidth: 400, minHeight: 400)
-        .animation(.easeInOut, value: processor.isProcessing)
-        .fileImporter(
-            isPresented: $showFilePicker,
-            allowedContentTypes: [.pdf],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    processor.selectedFile = url
-                    processor.processPDF()
-                }
-            case .failure(let error):
-                processor.outputText = "Error selecting file: \(error.localizedDescription)\n"
-                processor.showOutput = true
-            }
-        }
+    func reset() {
+        outputText = ""
+        isProcessing = false
+        selectedFile = nil
+        outputFile = nil
+        inputPreviewURL = nil
+        outputPreviewURL = nil
+        progress = 0.0
+        progressText = ""
+        showOutput = false
+        estimatedTimeRemaining = ""
     }
-}
+} 
+ 
