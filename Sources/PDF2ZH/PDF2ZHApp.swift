@@ -7,7 +7,7 @@ struct PDF2ZHApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 200, minHeight: 564)
+                .frame(minWidth: 600, minHeight: 564)
                 .onAppear {
                     if let window = NSApplication.shared.windows.first {
                         window.level = .normal
