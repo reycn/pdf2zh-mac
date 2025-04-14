@@ -9,14 +9,107 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     @Published var outputFile: URL?
     @Published var inputPreviewURL: URL?
     @Published var outputPreviewURL: URL?
-    @Published var progress: Double = 0.0
+    @Published var progress: Double = 0.0 {
+        didSet {
+            if progress >= 1.0 {
+                Task { @MainActor in
+                    if let window = NSApplication.shared.windows.first {
+                        let newHeight = calculateWindowHeight()
+                        let newSize = NSSize(width: window.frame.width, height: newHeight)
+                        window.setContentSize(newSize)
+                    }
+                }
+            }
+        }
+    }
     @Published var progressText: String = ""
     @Published var showOutput: Bool = false
     @Published var estimatedTimeRemaining: String = ""
+    @Published var recentFiles: [RecentFile] = []
     
     private let queue = DispatchQueue(label: "com.pdf2zh.processor", qos: .userInitiated)
     private var startTime: Date?
     private var lastProgressUpdate: Date?
+    private let maxRecentFiles = 5
+    private let recentFilesKey = "com.pdf2zh.recentFiles"
+    private var process: Process?
+    
+    struct RecentFile: Identifiable, Equatable, Codable {
+        let id: UUID
+        let name: String
+        let url: URL
+        let date: Date
+        
+        static func == (lhs: RecentFile, rhs: RecentFile) -> Bool {
+            return lhs.url == rhs.url
+        }
+        
+        enum CodingKeys: String, CodingKey {
+            case id, name, url, date
+        }
+        
+        init(name: String, url: URL, date: Date) {
+            self.id = UUID()
+            self.name = name
+            self.url = url
+            self.date = date
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            name = try container.decode(String.self, forKey: .name)
+            let urlString = try container.decode(String.self, forKey: .url)
+            guard let url = URL(string: urlString) else {
+                throw DecodingError.dataCorruptedError(forKey: .url, in: container, debugDescription: "Invalid URL string")
+            }
+            self.url = url
+            date = try container.decode(Date.self, forKey: .date)
+        }
+        
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(name, forKey: .name)
+            try container.encode(url.absoluteString, forKey: .url)
+            try container.encode(date, forKey: .date)
+        }
+    }
+    
+    init() {
+        loadRecentFiles()
+    }
+    
+    private func loadRecentFiles() {
+        if let data = UserDefaults.standard.data(forKey: recentFilesKey),
+           let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
+            recentFiles = decoded
+        }
+    }
+    
+    private func saveRecentFiles() {
+        if let encoded = try? JSONEncoder().encode(recentFiles) {
+            UserDefaults.standard.set(encoded, forKey: recentFilesKey)
+        }
+    }
+    
+    private func addToRecentFiles(_ url: URL) {
+        let fileName = url.lastPathComponent
+        let newFile = RecentFile(name: fileName, url: url, date: Date())
+        
+        // Remove if already exists
+        recentFiles.removeAll { $0.url == url }
+        
+        // Add to the beginning
+        recentFiles.insert(newFile, at: 0)
+        
+        // Limit the number of recent files
+        if recentFiles.count > maxRecentFiles {
+            recentFiles = Array(recentFiles.prefix(maxRecentFiles))
+        }
+        
+        saveRecentFiles()
+    }
     
     private func parseProgress(from line: String) -> (Double, String, String)? {
         // Try to match percentage pattern first (e.g., "4%", "15%")
@@ -120,6 +213,21 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         }
     }
     
+    func stopProcessing() {
+        queue.sync {
+            if let process = process {
+                process.terminate()
+                self.process = nil
+            }
+            isProcessing = false
+            progress = 0.0
+            progressText = ""
+            outputText = ""
+            showOutput = false
+            estimatedTimeRemaining = ""
+        }
+    }
+    
     func processPDF() {
         guard let filePath = selectedFile?.path else { return }
         guard let fileURL = selectedFile else { return }
@@ -140,31 +248,68 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         // Set input preview URL
         inputPreviewURL = fileURL
         
-        let process = Process()
-        process.launchPath = "/bin/zsh"
-        process.arguments = ["-c", "pdf2zh \"\(filePath)\" -o \"\(fileDir)\" "]
+        process = Process()
+        process?.launchPath = "/bin/zsh"
+        // Properly escape paths and use single quotes for better shell compatibility
+        process?.arguments = ["-c", "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"]
         
         let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        process?.standardOutput = pipe
+        process?.standardError = pipe
         
         let outputHandle = pipe.fileHandleForReading
         outputHandle.readabilityHandler = { [weak self] pipe in
-            if let line = String(data: pipe.availableData, encoding: .utf8) {
-                print("Received line: \(line)")
-                Task { @MainActor in
-                    guard let self = self else { return }
-                    self.queue.sync {
-                        if self.shouldShowOutput(line) {
-                            self.outputText += self.formatOutputLine(line)
-                            self.showOutput = true
-                        }
-                        if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
-                            print("Updating progress: \(newProgress), text: \(progressText)")
-                            self.progress = newProgress
-                            self.progressText = progressText
-                            if !timeRemaining.isEmpty {
-                                self.estimatedTimeRemaining = timeRemaining
+            guard let self = self else { return }
+            
+            // Read all available data
+            let data = pipe.availableData
+            if data.isEmpty {
+                return
+            }
+            
+            // Convert data to string, handling potential encoding issues
+            if let line = String(data: data, encoding: .utf8) {
+                // Process each line separately
+                let lines = line.components(separatedBy: .newlines)
+                for line in lines {
+                    if line.isEmpty {
+                        continue
+                    }
+                    
+                    print("Processing line: \(line)")
+                    
+                    Task { @MainActor in
+                        self.queue.sync {
+                            // Check for success message in the output
+                            if line.contains("Processing completed successfully!") {
+                                self.outputText += "[Success] \(line)\n"
+                                self.showOutput = true
+                                self.progress = 1.0
+                                self.progressText = "Completed"
+                                self.isProcessing = false
+                                
+                                // Set output file and preview immediately
+                                let outputPath = "\(fileDir)/\(outputFileName)"
+                                self.outputFile = URL(fileURLWithPath: outputPath)
+                                self.outputPreviewURL = self.outputFile
+                                
+                                // Add to recent files
+                                self.addToRecentFiles(self.outputFile!)
+                                return
+                            }
+                            
+                            if self.shouldShowOutput(line) {
+                                self.outputText += self.formatOutputLine(line) + "\n"
+                                self.showOutput = true
+                            }
+                            
+                            if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
+                                print("Updating progress: \(newProgress), text: \(progressText)")
+                                self.progress = newProgress
+                                self.progressText = progressText
+                                if !timeRemaining.isEmpty {
+                                    self.estimatedTimeRemaining = timeRemaining
+                                }
                             }
                         }
                     }
@@ -172,7 +317,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             }
         }
         
-        process.terminationHandler = { [weak self] process in
+        process?.terminationHandler = { [weak self] process in
             Task { @MainActor in
                 guard let self = self else { return }
                 self.queue.sync {
@@ -181,6 +326,10 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
                         let outputPath = "\(fileDir)/\(outputFileName)"
                         self.outputFile = URL(fileURLWithPath: outputPath)
                         self.outputPreviewURL = self.outputFile
+                        
+                        // Add to recent files
+                        self.addToRecentFiles(self.outputFile!)
+                        
                         if !self.showOutput {
                             self.outputText = "[Success] Processing completed successfully!\n"
                             self.showOutput = true
@@ -196,7 +345,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         }
         
         do {
-            try process.run()
+            try process?.run()
         } catch {
             outputText = "[Error] \(error.localizedDescription)\n"
             showOutput = true
@@ -210,6 +359,10 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         }
     }
     
+    func openRecentFile(_ file: RecentFile) {
+        NSWorkspace.shared.open(file.url)
+    }
+    
     func reset() {
         outputText = ""
         isProcessing = false
@@ -221,6 +374,22 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         progressText = ""
         showOutput = false
         estimatedTimeRemaining = ""
+    }
+    
+    private func calculateWindowHeight() -> CGFloat {
+        var height: CGFloat = 64 // Base padding
+        
+        // PDF preview height
+        if outputPreviewURL != nil {
+            height += 400
+        }
+        
+        // Output buttons height
+        if outputFile != nil {
+            height += 160
+        }
+        
+        return height
     }
 } 
  

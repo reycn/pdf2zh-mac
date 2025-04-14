@@ -9,24 +9,10 @@ struct FileDropView: View {
     
     var body: some View {
         VStack(spacing: 32) {
-            Button(action: { showFilePicker = true }) {
-                HStack {
-                    Image(systemName: "doc.fill")
-                    Text("Select PDF File")
-                }
+            Text("")
                 .padding()
                 .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(processor.isProcessing)
-            
-            Text("or")
-                .foregroundColor(.secondary)
-            
-            Text("Drag and drop PDF file here")
-                .padding()
-                .frame(maxWidth: .infinity)
-                .frame(height: 300)
+                .frame(height: 464)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(isTargeted ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
@@ -35,6 +21,21 @@ struct FileDropView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(isTargeted ? Color.blue : Color.gray, style: StrokeStyle(lineWidth: 2, dash: [5]))
                 )
+                .overlay(
+                    VStack {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                            .padding(.bottom, 16)
+                        
+                        Text("Drop a PDF file here")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                    }
+                )
+                .onTapGesture {
+                    showFilePicker = true
+                }
                 .onDrop(of: [.pdf], isTargeted: $isTargeted) { providers, _ in
                     guard let provider = providers.first else { return false }
                     

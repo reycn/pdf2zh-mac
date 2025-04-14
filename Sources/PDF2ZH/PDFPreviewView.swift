@@ -14,14 +14,14 @@ struct PDFPreviewView: View {
             
             if let url = url {
                 PDFKitView(url: url)
-                    .frame(height: 300)
+                    .frame(height: 500)
                     .frame(maxWidth: .infinity)
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(8)
             } else {
                 Rectangle()
                     .fill(Color.gray.opacity(0.1))
-                    .frame(height: 300)
+                    .frame(height: 500)
                     .frame(maxWidth: .infinity)
                     .cornerRadius(8)
                     .overlay(
