@@ -286,7 +286,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         
         process = Process()
         process?.launchPath = "/bin/zsh"
-        process?.arguments = ["-c", "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"]
+        process?.arguments = ["-c", "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -s '\(service.code)' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"]
         let pipe = Pipe()
         process?.standardOutput = pipe
         process?.standardError = pipe
@@ -510,6 +510,12 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
                 to: targetLanguage.rawValue
             )
         case .deepl:
+            return try await DeepLTranslator.shared.translate(
+                text: text,
+                from: sourceLanguage.rawValue,
+                to: targetLanguage.rawValue
+            )
+        case .deeplx:
             return try await DeepLTranslator.shared.translate(
                 text: text,
                 from: sourceLanguage.rawValue,

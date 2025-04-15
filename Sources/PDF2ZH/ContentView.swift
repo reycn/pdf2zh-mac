@@ -49,8 +49,9 @@ enum Language: String, CaseIterable, Identifiable {
 
 @available(macOS 13.0, *)
 enum Service: String, CaseIterable, Identifiable {
-    case google = "Google"
+    case deeplx = "DeepL X"
     case deepl = "DeepL"
+    case google = "Google"
     
     var id: String { self.rawValue }
     
@@ -58,6 +59,7 @@ enum Service: String, CaseIterable, Identifiable {
         switch self {
         case .google: return "google"
         case .deepl: return "deepl"
+        case .deeplx: return "deeplx"
         }
     }
 }
@@ -71,7 +73,7 @@ struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem = .options
     @State private var selectedSourceLanguage: Language = .english
     @State private var selectedTargetLanguage: Language = .chinese
-    @State private var selectedService: Service = .google
+    @State private var selectedService: Service = .deeplx
     
     private func calculateWindowHeight() -> CGFloat {
         var height: CGFloat = 64 // Base padding (32 * 2 for top and bottom)
@@ -214,6 +216,7 @@ struct SidebarView: View {
                 Text("Preferences")
             }
             .padding(.leading, 0)
+            .padding(.top, 8)
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)
@@ -226,6 +229,9 @@ struct SidebarView: View {
 struct RecentFileRow: View {
     let file: PDFProcessor.RecentFile
     let processor: PDFProcessor
+    @State private var isBilingualHovered = false
+    @State private var isMonoHovered = false
+    @State private var isNewItem = true
     
     var body: some View {
         HStack(spacing: 8) {
@@ -246,10 +252,13 @@ struct RecentFileRow: View {
                 processor.openRecentFile(file)
             }) {
                 Image(systemName: "doc.text.fill")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isBilingualHovered ? .accentColor : .secondary)
             }
             .buttonStyle(.plain)
             .help("Open bilingual version")
+            .onHover { isHovered in
+                isBilingualHovered = isHovered
+            }
             
             // Mono icon button
             Button(action: {
@@ -258,13 +267,26 @@ struct RecentFileRow: View {
                 NSWorkspace.shared.open(monoURL)
             }) {
                 Image(systemName: "doc.fill")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isMonoHovered ? .accentColor : .secondary)
             }
             .buttonStyle(.plain)
             .help("Open mono version")
+            .onHover { isHovered in
+                isMonoHovered = isHovered
+            }
         }
         .padding(.leading, 12)
         .cornerRadius(6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(isNewItem ? 0.1 : 0))
+        )
+        .onAppear {
+            // Animate twice
+            withAnimation(.easeInOut(duration: 0.5).repeatCount(2)) {
+                isNewItem = false
+            }
+        }
     }
 }
 
@@ -423,8 +445,25 @@ struct ToolbarView: ToolbarContent {
                     }
                     .buttonStyle(.plain)
                     .help("Start Over")
+                    
+                    Button(action: {
+                        if let outputFile = processor.outputFile {
+                            let monoPath = outputFile.path.replacingOccurrences(of: "-dual.pdf", with: "-mono.pdf")
+                            let monoURL = URL(fileURLWithPath: monoPath)
+                            NSWorkspace.shared.open(monoURL)
+                        }
+                    }) {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open mono version")
                 }
             } else {
+
+                Text("Version 0.0.1")
+                .padding(.trailing, 8)
                 // State 3: Initial state or processing stopped/failed
                 // let _ = print("[ToolbarView] Showing GitHub Button") // Removed debug print
                 Button(action: { processor.openGitHub() }) {
@@ -508,14 +547,12 @@ struct ContentOptionsView: View {
             } else {
                 // PDF Preview Section - show when we have a preview URL
                 if let previewURL = processor.outputPreviewURL ?? processor.inputPreviewURL {
-                    let _ = print("[ContentOptionsView] Using preview URL: \(previewURL.path)") // Log which URL is used
                     VStack(spacing: 24) {
                         PDFPreviewView(url: previewURL, title: "")
                             .id(previewURL) // Keep id modifier to force recreation on URL change
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 } else {
-                    let _ = print("[ContentOptionsView] No preview URL available (input: \(processor.inputPreviewURL?.path ?? "nil"), output: \(processor.outputPreviewURL?.path ?? "nil"))") // Log when no URL is available
                     // Optionally show a placeholder or error message if needed when selectedFile is not nil but no preview URL is ready
                     Text("Preparing preview...")
                         .foregroundColor(.secondary)
