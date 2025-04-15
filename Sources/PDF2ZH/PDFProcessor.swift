@@ -15,6 +15,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     @Published var outputPreviewURL: URL?
     @Published var progress: Double = 0.0 {
         didSet {
+            print("Progress updated to: \(progress)")
             if progress >= 1.0 {
                 Task { @MainActor in
                     if let window = NSApplication.shared.windows.first {
@@ -33,6 +34,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     @Published var service: Service = .google
     @Published var sourceLanguage: Language = .english
     @Published var targetLanguage: Language = .chinese
+    @Published var autoOpenMono: Bool = true
     
     private let queue = DispatchQueue(label: "com.pdf2zh.processor", qos: .userInitiated)
     private var startTime: Date?
@@ -149,13 +151,38 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     }
     
     private func parseProgress(from line: String) -> (Double, String, String)? {
-        // Try to match percentage pattern first (e.g., "4%", "15%")
+        // Try to match tqdm-style progress bar pattern (e.g., " 4%|▍         | 2/52 [00:00<00:15,  3.27it/s]")
+        let tqdmPattern = #"^\s*(\d+)%\s*\|[^|]*\|\s*(\d+)/(\d+)\s*\[([^\]]*)\]"#
+        if let regex = try? NSRegularExpression(pattern: tqdmPattern),
+           let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+           match.numberOfRanges >= 5 {
+            let percentage = Int((line as NSString).substring(with: match.range(at: 1))) ?? 0
+            let current = Int((line as NSString).substring(with: match.range(at: 2))) ?? 0
+            let total = Int((line as NSString).substring(with: match.range(at: 3))) ?? 0
+            let timeInfo = (line as NSString).substring(with: match.range(at: 4))
+            
+            let progress = Double(percentage) / 100.0
+            print("Found tqdm progress: \(percentage)% (\(current)/\(total))")
+            
+            // Extract estimated time remaining from timeInfo
+            let timePattern = #"<([^,]+)"#
+            if let timeRegex = try? NSRegularExpression(pattern: timePattern),
+               let timeMatch = timeRegex.firstMatch(in: timeInfo, range: NSRange(timeInfo.startIndex..., in: timeInfo)),
+               timeMatch.numberOfRanges >= 2 {
+                let timeRemaining = (timeInfo as NSString).substring(with: timeMatch.range(at: 1))
+                return (progress, "\(current)/\(total)", timeRemaining)
+            }
+            return (progress, "\(current)/\(total)", "")
+        }
+        
+        // Try to match percentage pattern (e.g., "4%", "15%")
         let percentagePattern = #"(\d+)%"#
         if let regex = try? NSRegularExpression(pattern: percentagePattern),
            let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
            match.numberOfRanges >= 2 {
             let percentage = Int((line as NSString).substring(with: match.range(at: 1))) ?? 0
             let progress = Double(percentage) / 100.0
+            print("Found percentage progress: \(percentage)%")
             return (progress, "\(percentage)%", "")
         }
         
@@ -168,31 +195,22 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             let total = Int((line as NSString).substring(with: match.range(at: 2))) ?? 0
             if total > 0 {
                 let progress = Double(current) / Double(total)
+                print("Found fraction progress: \(current)/\(total)")
                 return (progress, "\(current)/\(total)", "")
             }
         }
         
-        // Try to match progress bar pattern with time (e.g., "| 2/46 [00:01<00:27, 1.621t/s]")
-        let progressBarPattern = #"\|?\s*(\d+)\s*/\s*(\d+)\s*\[([^\]]*)\]"#
-        if let regex = try? NSRegularExpression(pattern: progressBarPattern),
+        // Try to match simple progress indicator (e.g., "Processing page 5 of 10")
+        let pagePattern = #"Processing page (\d+) of (\d+)"#
+        if let regex = try? NSRegularExpression(pattern: pagePattern),
            let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-           match.numberOfRanges >= 4 {
+           match.numberOfRanges >= 3 {
             let current = Int((line as NSString).substring(with: match.range(at: 1))) ?? 0
             let total = Int((line as NSString).substring(with: match.range(at: 2))) ?? 0
-            let timeInfo = (line as NSString).substring(with: match.range(at: 3))
-            
             if total > 0 {
                 let progress = Double(current) / Double(total)
-                
-                // Extract estimated time remaining from timeInfo
-                let timePattern = #"<([^,]+)"#
-                if let timeRegex = try? NSRegularExpression(pattern: timePattern),
-                   let timeMatch = timeRegex.firstMatch(in: timeInfo, range: NSRange(timeInfo.startIndex..., in: timeInfo)),
-                   timeMatch.numberOfRanges >= 2 {
-                    let timeRemaining = (timeInfo as NSString).substring(with: timeMatch.range(at: 1))
-                    return (progress, "\(current)/\(total)", timeRemaining)
-                }
-                return (progress, "\(current)/\(total)", "")
+                print("Found page progress: \(current)/\(total)")
+                return (progress, "Page \(current)/\(total)", "")
             }
         }
         
@@ -286,7 +304,9 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         
         process = Process()
         process?.launchPath = "/bin/zsh"
-        process?.arguments = ["-c", "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -s '\(service.code)' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"]
+        let command = "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -s '\(service.code)' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"
+        print("Executing command: \(command)")
+        process?.arguments = ["-c", command]
         let pipe = Pipe()
         process?.standardOutput = pipe
         process?.standardError = pipe
@@ -296,28 +316,42 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             let data = pipe.availableData
             if data.isEmpty { return }
             if let chunk = String(data: data, encoding: .utf8) {
+                print("Raw output chunk: \(chunk)")
                 self.outputBuffer += chunk
                 while let range = self.outputBuffer.range(of: "\n") {
                     let line = String(self.outputBuffer[..<range.lowerBound])
                     self.outputBuffer = String(self.outputBuffer[range.upperBound...])
                     if line.isEmpty { continue }
+                    
+                    print("Processing line: \(line)")
+                    
+                    // Process the line immediately on the main thread
                     Task { @MainActor in
                         if line.contains("Processing completed successfully!") {
+                            print("Found success message")
                             self.outputText += "[Success] \(line)\n"
                             if !self.showOutput { self.showOutput = true }
                         } else if self.shouldShowOutput(line) {
+                            print("Showing output line: \(line)")
                             self.outputText += self.formatOutputLine(line) + "\n"
                             self.showOutput = true
                         }
+                        
+                        // Parse and update progress immediately
                         if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
+                            print("Progress update - value: \(newProgress), text: \(progressText), time: \(timeRemaining)")
                             if self.progress < 1.0 {
-                                self.progress = newProgress
-                                self.progressText = progressText
-                                if !timeRemaining.isEmpty {
-                                    self.estimatedTimeRemaining = timeRemaining
+                                withAnimation {
+                                    self.progress = newProgress
+                                    self.progressText = progressText
+                                    if !timeRemaining.isEmpty {
+                                        self.estimatedTimeRemaining = timeRemaining
+                                    }
                                 }
                                 self.objectWillChange.send()
                             }
+                        } else {
+                            print("No progress information found in line")
                         }
                     }
                 }
@@ -363,6 +397,11 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
                         let newHeight = self.calculateWindowHeight()
                         let newSize = NSSize(width: window.frame.width, height: newHeight)
                         window.setContentSize(newSize)
+                    }
+                    
+                    // Auto-open mono file if enabled
+                    if self.autoOpenMono {
+                        self.openMonoFile()
                     }
                     
                 } else {
@@ -420,6 +459,14 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         progressText = ""
         showOutput = false
         estimatedTimeRemaining = ""
+    }
+    
+    private func openMonoFile() {
+        if let outputFile = outputFile {
+            let monoPath = outputFile.path.replacingOccurrences(of: "-dual.pdf", with: "-mono.pdf")
+            let monoURL = URL(fileURLWithPath: monoPath)
+            NSWorkspace.shared.open(monoURL)
+        }
     }
     
     private func calculateWindowHeight() -> CGFloat {

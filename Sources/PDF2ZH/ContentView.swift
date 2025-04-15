@@ -74,6 +74,7 @@ struct ContentView: View {
     @State private var selectedSourceLanguage: Language = .english
     @State private var selectedTargetLanguage: Language = .chinese
     @State private var selectedService: Service = .deeplx
+    @State private var autoOpenMono: Bool = true
     
     private func calculateWindowHeight() -> CGFloat {
         var height: CGFloat = 64 // Base padding (32 * 2 for top and bottom)
@@ -105,7 +106,8 @@ struct ContentView: View {
                 selectedSidebarItem: $selectedSidebarItem,
                 selectedService: $selectedService,
                 selectedSourceLanguage: $selectedSourceLanguage,
-                selectedTargetLanguage: $selectedTargetLanguage
+                selectedTargetLanguage: $selectedTargetLanguage,
+                autoOpenMono: $autoOpenMono
             )
         } detail: {
             DetailView(
@@ -145,6 +147,9 @@ struct ContentView: View {
         }
         .onChange(of: selectedTargetLanguage) { newValue in
             processor.targetLanguage = newValue
+        }
+        .onChange(of: autoOpenMono) { newValue in
+            processor.autoOpenMono = newValue
         }
         .animation(.easeInOut, value: processor.isProcessing)
         .toolbar {
@@ -187,6 +192,7 @@ struct SidebarView: View {
     @Binding var selectedService: Service
     @Binding var selectedSourceLanguage: Language
     @Binding var selectedTargetLanguage: Language
+    @Binding var autoOpenMono: Bool
     
     var body: some View {
         List {
@@ -210,7 +216,8 @@ struct SidebarView: View {
                     selectedService: $selectedService,
                     selectedSourceLanguage: $selectedSourceLanguage,
                     selectedTargetLanguage: $selectedTargetLanguage,
-                    processor: processor
+                    processor: processor,
+                    autoOpenMono: $autoOpenMono
                 )
             } header: {
                 Text("Preferences")
@@ -297,11 +304,12 @@ struct PreferencesView: View {
     @Binding var selectedSourceLanguage: Language
     @Binding var selectedTargetLanguage: Language
     let processor: PDFProcessor
+    @Binding var autoOpenMono: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Use", selection: $selectedService) {
+                Picker("Use      ", selection: $selectedService) {
                     ForEach(Service.allCases) { service in
                         Text(service.rawValue).tag(service)
                     }
@@ -315,7 +323,7 @@ struct PreferencesView: View {
             .padding(.leading, 12)
             
             VStack(alignment: .leading, spacing: 8) {
-                Picker("From", selection: $selectedSourceLanguage) {
+                Picker("From    ", selection: $selectedSourceLanguage) {
                     ForEach(Language.allCases) { language in
                         Text(language.rawValue).tag(language)
                     }
@@ -329,7 +337,7 @@ struct PreferencesView: View {
             .padding(.leading, 12)
             
             VStack(alignment: .leading, spacing: 8) {
-                Picker("To", selection: $selectedTargetLanguage) {
+                Picker("To         ", selection: $selectedTargetLanguage) {
                     ForEach(Language.allCases) { language in
                         Text(language.rawValue).tag(language)
                     }
@@ -339,6 +347,12 @@ struct PreferencesView: View {
                 .onChange(of: selectedTargetLanguage) { newValue in
                     processor.targetLanguage = newValue
                 }
+            }
+            .padding(.leading, 12)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Open once completed", isOn: $autoOpenMono)
+                    .foregroundColor(.secondary)
             }
             .padding(.leading, 12)
         }
@@ -487,26 +501,32 @@ struct ToolbarView: ToolbarContent {
 // MARK: - Processing Toolbar View
 @available(macOS 13.0, *)
 struct ProcessingToolbarView: View {
-    let processor: PDFProcessor
+    @ObservedObject var processor: PDFProcessor
     
     var body: some View {
         HStack(spacing: 12) {
-            ProgressView(value: processor.progress)
-                .progressViewStyle(.linear)
-                .frame(width: 150)
-                .tint(.blue)
+            ProgressView(value: processor.progress) {
+                // Text("\(Int(processor.progress * 100))%")
+                //     .font(.system(.body, design: .rounded))
+                //     .foregroundColor(.primary)
+            }
+            .progressViewStyle(.linear)
+            .frame(width: 150)
+            .tint(.blue)
+            .animation(.easeInOut, value: processor.progress)
             
             Text("\(Int(processor.progress * 100))%")
                 .font(.system(.body, design: .rounded))
                 .foregroundColor(.primary)
                 .frame(width: 50)
+                .animation(.easeInOut, value: processor.progress)
             
-            if !processor.estimatedTimeRemaining.isEmpty {
-                Text("ETA: \(processor.estimatedTimeRemaining)")
-                    .font(.system(.body, design: .rounded))
-                    .foregroundColor(.secondary)
-                    .frame(width: 100)
-            }
+            // if !processor.estimatedTimeRemaining.isEmpty {
+            //     Text("ETA: \(processor.estimatedTimeRemaining)")
+            //         .font(.system(.body, design: .rounded))
+            //         .foregroundColor(.secondary)
+            //         .frame(width: 100)
+            // }
             
             Button(action: {
                 processor.stopProcessing()
