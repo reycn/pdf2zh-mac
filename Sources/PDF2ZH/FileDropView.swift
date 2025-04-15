@@ -6,6 +6,7 @@ struct FileDropView: View {
     @Binding var showFilePicker: Bool
     @ObservedObject var processor: PDFProcessor
     @State private var isTargeted = false
+    @State private var isHovered = false
     
     var body: some View {
         VStack(spacing: 32) {
@@ -15,12 +16,14 @@ struct FileDropView: View {
                 .frame(height: 464)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isTargeted ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
+                        .fill((isTargeted || isHovered) ? Color.accentColor.opacity(0.1) : Color.gray.opacity(0.1))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(isTargeted ? Color.blue : Color.gray, style: StrokeStyle(lineWidth: 2, dash: [5]))
+                        .stroke((isTargeted || isHovered) ? Color.accentColor : Color.gray, style: StrokeStyle(lineWidth: 2, dash: [5]))
                 )
+                .animation(.easeInOut(duration: 0.5), value: isTargeted)
+                .animation(.easeInOut(duration: 0.5), value: isHovered)
                 .overlay(
                     VStack {
                         Image(systemName: "doc.fill")
@@ -33,6 +36,9 @@ struct FileDropView: View {
                             .foregroundColor(.secondary)
                     }
                 )
+                .onHover { hovering in
+                    isHovered = hovering
+                }
                 .onTapGesture {
                     showFilePicker = true
                 }

@@ -1,0 +1,58 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Debug PDFMath Translate",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/debug/PDFMath Translate",
+            "preLaunchTask": "swift: Build Debug PDFMath Translate"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Release PDFMath Translate",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/release/PDFMath Translate",
+            "preLaunchTask": "swift: Build Release PDFMath Translate"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Debug PDFMath Translate (alpha)",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/debug/PDFMath Translate (alpha)",
+            "preLaunchTask": "swift: Build Debug PDFMath Translate (alpha)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Release PDFMath Translate (alpha)",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/release/PDFMath Translate (alpha)",
+            "preLaunchTask": "swift: Build Release PDFMath Translate (alpha)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Debug PDF2ZH",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/debug/PDF2ZH",
+            "preLaunchTask": "swift: Build Debug PDF2ZH"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:pdf2zh-mac}",
+            "name": "Release PDF2ZH",
+            "program": "${workspaceFolder:pdf2zh-mac}/.build/release/PDF2ZH",
+            "preLaunchTask": "swift: Build Release PDF2ZH"
+        }
+    ]
+}

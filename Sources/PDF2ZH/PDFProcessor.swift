@@ -1,5 +1,9 @@
 import SwiftUI
 import Foundation
+import Combine
+import PDFKit
+import UserNotifications
+import Vision
 
 @available(macOS 13.0, *)
 final class PDFProcessor: ObservableObject, @unchecked Sendable {
@@ -26,6 +30,9 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     @Published var showOutput: Bool = false
     @Published var estimatedTimeRemaining: String = ""
     @Published var recentFiles: [RecentFile] = []
+    @Published var service: Service = .google
+    @Published var sourceLanguage: Language = .english
+    @Published var targetLanguage: Language = .chinese
     
     private let queue = DispatchQueue(label: "com.pdf2zh.processor", qos: .userInitiated)
     private var startTime: Date?
@@ -33,6 +40,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     private let maxRecentFiles = 5
     private let recentFilesKey = "com.pdf2zh.recentFiles"
     private var process: Process?
+    private var outputBuffer = ""
     
     struct RecentFile: Identifiable, Equatable, Codable {
         let id: UUID
@@ -78,6 +86,35 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     
     init() {
         loadRecentFiles()
+        // Request notification permission and set delegate on init
+        setupNotifications()
+    }
+    
+    private func setupNotifications() {
+        // Check if we're running as a proper app bundle
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("Warning: Not running as a proper app bundle. Notifications disabled.")
+            return
+        }
+        
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                print("Error requesting notification authorization: \(error.localizedDescription)")
+                return
+            }
+            if granted {
+                print("Notification permission granted. Setting delegate.")
+                // Set delegate on main thread directly
+                DispatchQueue.main.async { 
+                    // Re-fetch center instance inside the main queue block
+                    let currentCenter = UNUserNotificationCenter.current()
+                    currentCenter.delegate = NotificationDelegate.shared
+                }
+            } else {
+                print("Notification permission denied.")
+            }
+        }
     }
     
     private func loadRecentFiles() {
@@ -119,7 +156,6 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
            match.numberOfRanges >= 2 {
             let percentage = Int((line as NSString).substring(with: match.range(at: 1))) ?? 0
             let progress = Double(percentage) / 100.0
-            print("Found percentage progress: \(percentage)%")
             return (progress, "\(percentage)%", "")
         }
         
@@ -132,7 +168,6 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             let total = Int((line as NSString).substring(with: match.range(at: 2))) ?? 0
             if total > 0 {
                 let progress = Double(current) / Double(total)
-                print("Found fraction progress: \(current)/\(total)")
                 return (progress, "\(current)/\(total)", "")
             }
         }
@@ -148,7 +183,6 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
             
             if total > 0 {
                 let progress = Double(current) / Double(total)
-                print("Found progress bar: \(current)/\(total)")
                 
                 // Extract estimated time remaining from timeInfo
                 let timePattern = #"<([^,]+)"#
@@ -208,7 +242,7 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
     }
     
     func openGitHub() {
-        if let url = URL(string: "https://github.com/byaidu/pdfmathtranslate") {
+        if let url = URL(string: "https://github.com/reycn/pdf2zh-mac") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -235,81 +269,54 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         let fileName = fileURL.deletingPathExtension().lastPathComponent
         let outputFileName = "\(fileName)-dual.pdf"
         
-        print("Starting PDF processing...")
-        isProcessing = true
-        progress = 0.0
-        progressText = ""
-        outputText = ""
-        showOutput = false
-        estimatedTimeRemaining = ""
-        startTime = Date()
-        lastProgressUpdate = nil
-        
-        // Set input preview URL
-        inputPreviewURL = fileURL
+        Task { @MainActor in
+            isProcessing = true
+            progress = 0.0
+            progressText = ""
+            outputText = ""
+            showOutput = false
+            estimatedTimeRemaining = ""
+            startTime = Date()
+            lastProgressUpdate = nil
+            
+            // Set input preview URL
+            inputPreviewURL = fileURL
+            objectWillChange.send()
+        }
         
         process = Process()
         process?.launchPath = "/bin/zsh"
-        // Properly escape paths and use single quotes for better shell compatibility
         process?.arguments = ["-c", "pdf2zh '\(filePath.replacingOccurrences(of: "'", with: "'\\''"))' -o '\(fileDir.replacingOccurrences(of: "'", with: "'\\''"))'"]
-        
         let pipe = Pipe()
         process?.standardOutput = pipe
         process?.standardError = pipe
-        
         let outputHandle = pipe.fileHandleForReading
         outputHandle.readabilityHandler = { [weak self] pipe in
             guard let self = self else { return }
-            
-            // Read all available data
             let data = pipe.availableData
-            if data.isEmpty {
-                return
-            }
-            
-            // Convert data to string, handling potential encoding issues
-            if let line = String(data: data, encoding: .utf8) {
-                // Process each line separately
-                let lines = line.components(separatedBy: .newlines)
-                for line in lines {
-                    if line.isEmpty {
-                        continue
-                    }
-                    
-                    print("Processing line: \(line)")
-                    
+            if data.isEmpty { return }
+            if let chunk = String(data: data, encoding: .utf8) {
+                self.outputBuffer += chunk
+                while let range = self.outputBuffer.range(of: "\n") {
+                    let line = String(self.outputBuffer[..<range.lowerBound])
+                    self.outputBuffer = String(self.outputBuffer[range.upperBound...])
+                    if line.isEmpty { continue }
                     Task { @MainActor in
-                        self.queue.sync {
-                            // Check for success message in the output
-                            if line.contains("Processing completed successfully!") {
-                                self.outputText += "[Success] \(line)\n"
-                                self.showOutput = true
-                                self.progress = 1.0
-                                self.progressText = "Completed"
-                                self.isProcessing = false
-                                
-                                // Set output file and preview immediately
-                                let outputPath = "\(fileDir)/\(outputFileName)"
-                                self.outputFile = URL(fileURLWithPath: outputPath)
-                                self.outputPreviewURL = self.outputFile
-                                
-                                // Add to recent files
-                                self.addToRecentFiles(self.outputFile!)
-                                return
-                            }
-                            
-                            if self.shouldShowOutput(line) {
-                                self.outputText += self.formatOutputLine(line) + "\n"
-                                self.showOutput = true
-                            }
-                            
-                            if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
-                                print("Updating progress: \(newProgress), text: \(progressText)")
+                        if line.contains("Processing completed successfully!") {
+                            self.outputText += "[Success] \(line)\n"
+                            if !self.showOutput { self.showOutput = true }
+                        } else if self.shouldShowOutput(line) {
+                            self.outputText += self.formatOutputLine(line) + "\n"
+                            self.showOutput = true
+                        }
+                        if let (newProgress, progressText, timeRemaining) = self.parseProgress(from: line) {
+                            if self.progress < 1.0 {
                                 self.progress = newProgress
                                 self.progressText = progressText
                                 if !timeRemaining.isEmpty {
                                     self.estimatedTimeRemaining = timeRemaining
                                 }
+                                self.objectWillChange.send()
                             }
                         }
                     }
@@ -318,27 +325,61 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         }
         
         process?.terminationHandler = { [weak self] process in
+            // Ensure the entire termination handling runs on the MainActor
             Task { @MainActor in
                 guard let self = self else { return }
-                self.queue.sync {
-                    self.isProcessing = false
-                    if process.terminationStatus == 0 {
-                        let outputPath = "\(fileDir)/\(outputFileName)"
-                        self.outputFile = URL(fileURLWithPath: outputPath)
-                        self.outputPreviewURL = self.outputFile
-                        
-                        // Add to recent files
-                        self.addToRecentFiles(self.outputFile!)
-                        
-                        if !self.showOutput {
-                            self.outputText = "[Success] Processing completed successfully!\n"
-                            self.showOutput = true
-                        }
-                        self.progress = 1.0
-                        self.progressText = "Completed"
-                    } else {
-                        self.outputText += "\n[Error] Processing failed with exit code: \(process.terminationStatus)\n"
-                        self.showOutput = true
+                
+                // Final state update
+                self.isProcessing = false
+                self.estimatedTimeRemaining = "" // Clear ETA
+                
+                if process.terminationStatus == 0 {
+                    // --- Success Case ---
+                    let outputPath = "\(fileDir)/\(outputFileName)"
+                    let outputFile = URL(fileURLWithPath: outputPath)
+                    let monoPath = outputPath.replacingOccurrences(of: "-dual.pdf", with: "-mono.pdf")
+                    let monoURL = URL(fileURLWithPath: monoPath)
+                    
+                    // Set output file and preview URL (mono version)
+                    self.outputFile = outputFile // Still keep the dual file as the main output reference
+                    self.outputPreviewURL = monoURL // Set preview to the mono file
+                    
+                    // Update other state
+                    self.addToRecentFiles(outputFile)
+                    if !self.outputText.contains("[Success]") { // Add success message if not already seen
+                       self.outputText += "[Success] Processing completed successfully!\n"
+                    }
+                    self.showOutput = true // Ensure output is visible
+                    self.progress = 1.0
+                    self.progressText = "Completed"
+                    
+                    // Send notification
+                    let dualPath = outputFile.path.replacingOccurrences(of: "-mono.pdf", with: "-dual.pdf")
+                    let dualURL = URL(fileURLWithPath: dualPath)
+                    self.sendNotification(title: "Processing Completed", body: "The PDF processing completed successfully!", url: dualURL)
+                    
+                    // Update window size *after* setting the outputPreviewURL
+                    if let window = NSApplication.shared.windows.first {
+                        let newHeight = self.calculateWindowHeight()
+                        let newSize = NSSize(width: window.frame.width, height: newHeight)
+                        window.setContentSize(newSize)
+                    }
+                    
+                } else {
+                    // --- Error Case ---
+                    self.outputText += "\n[Error] Processing failed with exit code: \(process.terminationStatus)\n"
+                    self.showOutput = true
+                    self.progress = 0.0 // Reset progress on error
+                    self.progressText = "Failed"
+                    
+                    // Send notification
+                    self.sendNotification(title: "Processing Error", body: "The PDF processing failed with exit code: \(process.terminationStatus)")
+                    
+                    // Update window size even on error (might need less space)
+                     if let window = NSApplication.shared.windows.first {
+                        let newHeight = self.calculateWindowHeight()
+                        let newSize = NSSize(width: window.frame.width, height: newHeight)
+                        window.setContentSize(newSize)
                     }
                 }
             }
@@ -347,9 +388,14 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         do {
             try process?.run()
         } catch {
-            outputText = "[Error] \(error.localizedDescription)\n"
-            showOutput = true
-            isProcessing = false
+            Task { @MainActor in
+                outputText = "[Error] \(error.localizedDescription)\n"
+                showOutput = true
+                isProcessing = false
+                
+                // Send notification
+                self.sendNotification(title: "Processing Error", body: "The PDF processing failed with error: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -390,6 +436,188 @@ final class PDFProcessor: ObservableObject, @unchecked Sendable {
         }
         
         return height
+    }
+    
+    func sendNotification(title: String, body: String, url: URL? = nil) {
+        // Check if we're running as a proper app bundle
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("Warning: Not running as a proper app bundle. Notifications disabled.")
+            return
+        }
+        
+        let center = UNUserNotificationCenter.current()
+        
+        // Check authorization status before sending
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else {
+                print("Cannot send notification: Not authorized.")
+                return
+            }
+            
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = UNNotificationSound.default
+            
+            var userInfo: [AnyHashable: Any] = [:] // Use AnyHashable for keys
+            if let url = url {
+                userInfo["url"] = url.path // Store the path string
+            }
+            content.userInfo = userInfo
+            
+            // Deliver the notification immediately.
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+            
+            // Add the request to the notification center.
+            center.add(request) { error in
+                if let error = error {
+                    print("Error adding notification request: \(error.localizedDescription)")
+                } else {
+                    print("Notification scheduled: \(title) - \(body)")
+                }
+            }
+        }
+    }
+    
+    @MainActor
+    func handleNotificationClick(urlPath: String?) {
+        // Break down URL creation
+        guard let path = urlPath else {
+            print("Handling notification click: No URL path provided, opening app.")
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        // Create a proper file URL from the path
+        let url = URL(fileURLWithPath: path)
+        
+        print("Handling notification click for URL: \(url.path)")
+        if FileManager.default.fileExists(atPath: path) {
+             NSWorkspace.shared.open(url)
+        } else {
+            print("File not found at path: \(path)")
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+    }
+    
+    private func translate(_ text: String) async throws -> String {
+        switch service {
+        case .google:
+            return try await GoogleTranslator.shared.translate(
+                text: text,
+                from: sourceLanguage.rawValue,
+                to: targetLanguage.rawValue
+            )
+        case .deepl:
+            return try await DeepLTranslator.shared.translate(
+                text: text,
+                from: sourceLanguage.rawValue,
+                to: targetLanguage.rawValue
+            )
+        }
+    }
+}
+
+@available(macOS 13.0, *)
+@MainActor
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationDelegate()
+    
+    private override init() {
+        super.init()
+        // Check if we're running as a proper app bundle
+        if Bundle.main.bundleIdentifier == nil {
+            print("Warning: Not running as a proper app bundle. NotificationDelegate may not function correctly.")
+        }
+    } // Make init private for singleton
+    
+    // Handle notification presentation in foreground
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Check if we're running as a proper app bundle
+        if Bundle.main.bundleIdentifier == nil {
+            print("Warning: Not running as a proper app bundle. Skipping notification presentation.")
+            completionHandler([])
+            return
+        }
+        
+        print("Notification will present in foreground: \(notification.request.content.title)")
+        // Show alert and play sound
+        completionHandler([.banner, .sound]) // Use .banner for modern alert style
+    }
+    
+    // Handle user interaction with the notification (e.g., clicking)
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        // Check if we're running as a proper app bundle
+        if Bundle.main.bundleIdentifier == nil {
+            print("Warning: Not running as a proper app bundle. Skipping notification handling.")
+            completionHandler()
+            return
+        }
+        
+        let userInfo = response.notification.request.content.userInfo
+        print("Notification activated: \(response.notification.request.content.title)")
+        print("User Info: \(userInfo)")
+        
+        // Extract the URL path from userInfo
+        let urlPath = userInfo["url"] as? String
+        
+        // Pass the path to the main actor for handling
+        Task { @MainActor in // Ensure the whole block runs on MainActor
+            // Find the processor instance
+             if let window = NSApplication.shared.windows.first,
+                let hostingController = window.contentViewController as? NSHostingController<ContentView> {
+                 let processor = hostingController.rootView.processor
+                 print("Found processor instance via window.")
+                 processor.handleNotificationClick(urlPath: urlPath) // Calls @MainActor func
+             } else {
+                 print("Could not find PDFProcessor instance to handle notification click.")
+                 // Break down URL creation for fallback
+                 if let path = urlPath {
+                     // Create a proper file URL from the path
+                     let url = URL(fileURLWithPath: path)
+                     print("Opening URL directly: \(url.path)")
+                     if FileManager.default.fileExists(atPath: path) {
+                         NSWorkspace.shared.open(url)
+                     } else {
+                          print("File not found at path: \(path), activating app.")
+                          NSApplication.shared.activate(ignoringOtherApps: true)
+                     }
+                 } else {
+                     print("Activating app directly (no path provided).")
+                     NSApplication.shared.activate(ignoringOtherApps: true)
+                 }
+             }
+        }
+
+        completionHandler()
+    }
+}
+
+// Translator protocols and implementations
+protocol Translator: Sendable {
+    func translate(text: String, from: String, to: String) async throws -> String
+}
+
+@available(macOS 13.0, *)
+final class GoogleTranslator: Translator {
+    static let shared = GoogleTranslator()
+    private init() {}
+    
+    func translate(text: String, from: String, to: String) async throws -> String {
+        // TODO: Implement Google Translate API
+        return text
+    }
+}
+
+@available(macOS 13.0, *)
+final class DeepLTranslator: Translator {
+    static let shared = DeepLTranslator()
+    private init() {}
+    
+    func translate(text: String, from: String, to: String) async throws -> String {
+        // TODO: Implement DeepL API
+        return text
     }
 } 
  

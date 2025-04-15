@@ -7,18 +7,21 @@ struct PDFPreviewView: View {
     let title: String
     
     var body: some View {
+        let _ = print("[PDFPreviewView] Body evaluated. URL: \(url?.path ?? "nil")")
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
                 .foregroundColor(.secondary)
             
             if let url = url {
+                let _ = print("[PDFPreviewView] Creating PDFKitView for URL: \(url.path)")
                 PDFKitView(url: url)
                     .frame(height: 500)
                     .frame(maxWidth: .infinity)
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(8)
             } else {
+                let _ = print("[PDFPreviewView] URL is nil, showing placeholder.")
                 Rectangle()
                     .fill(Color.gray.opacity(0.1))
                     .frame(height: 500)
@@ -39,6 +42,7 @@ struct PDFKitView: NSViewRepresentable {
     let url: URL
     
     func makeNSView(context: Context) -> PDFView {
+        let _ = print("[PDFKitView] makeNSView called for URL: \(url.path)")
         let pdfView = PDFView()
         
         // Basic configuration
@@ -52,6 +56,9 @@ struct PDFKitView: NSViewRepresentable {
             scrollView.hasHorizontalScroller = false
             scrollView.autohidesScrollers = true
             scrollView.scrollerStyle = .overlay
+            scrollView.borderType = .noBorder
+            scrollView.drawsBackground = false
+            scrollView.backgroundColor = .clear
         }
         
         // Configure PDF view for better width fitting
@@ -94,6 +101,7 @@ struct PDFKitView: NSViewRepresentable {
     }
     
     func updateNSView(_ nsView: PDFView, context: Context) {
+        let _ = print("[PDFKitView] updateNSView called for URL: \(url.path)")
         if let document = PDFDocument(url: url) {
             nsView.document = document
             nsView.goToFirstPage(nil)

@@ -19,7 +19,10 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ],
-            path: "Sources/PDF2ZH"
+            path: "Sources/PDF2ZH",
+            resources: [
+                .process("Resources")
+            ]
         )
     ]
 )

@@ -1,0 +1,18 @@
+{
+  "images" : [
+    {
+      "filename" : "github-mark.png",
+      "scale" : "1x"
+    },
+    {
+      "scale" : "2x"
+    },
+    {
+      "scale" : "3x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+} 

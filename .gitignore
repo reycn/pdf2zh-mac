@@ -1,7 +1,7 @@
 .vscode
 .DS_Store
 .swiftpm
-/.build
+.build
 /Packages
 xcuserdata/
 DerivedData/
