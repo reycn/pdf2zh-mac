@@ -1,0 +1,9 @@
+[apps.PDFMathTranslate]
+product = 'PDFMathTranslate'
+version = '0.1.beta'
+name = 'PDFMathTranslate'
+icon = 'icon.png'
+
+
+[apps.PDFMathTranslate.plist]
+CFBundleShortVersionString = "$(version)"

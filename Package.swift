@@ -4,25 +4,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "PDF2ZH",
+    name: "PDFMathTranslate",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v13),
+    ],
+    products: [
+        .executable(name: "PDFMathTranslate", targets: ["PDFMathTranslate"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0")
+        // Dependencies would go here
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
-            name: "PDF2ZH",
-            dependencies: [
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/PDF2ZH",
-            resources: [
-                .process("Resources")
-            ]
+            name: "PDFMathTranslate",
+            dependencies: [],
+            path: "Sources"
         )
     ]
 )
