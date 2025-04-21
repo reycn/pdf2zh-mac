@@ -11,8 +11,8 @@ Not stable, in alpha.
 
 ## Usage
 1. Clone the repo
-2. Edit the code if you wanna customize the languages etc
-3. `swift run`
+2. `swift run` to run as testing, or `./.build.sh` to build
+3. Builded `.app` application will be available at `./Release/PDFMathTranslate.app`
 
 ## Preview
 ![](./assets/img/pdf-mac.gif)
