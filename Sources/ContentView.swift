@@ -289,31 +289,56 @@ struct ContentView: View {
 // PDFKitView for displaying the first page of a PDF
 struct PDFKitView: NSViewRepresentable {
     let url: URL
+    
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.document = PDFDocument(url: url)
-        pdfView.autoScales = false
+        pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        if let page = pdfView.document?.page(at: 0) {
-            pdfView.go(to: page)
-            let _ = page.bounds(for: pdfView.displayBox)
-            pdfView.scaleFactor = 1
+        
+        // Add observer to handle container size changes
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: pdfView.enclosingScrollView,
+            queue: nil) { _ in
+                // Dispatch to main thread since adjustZoomToFitWidth is main actor-isolated
+                DispatchQueue.main.async {
+                    adjustZoomToFitWidth(pdfView)
+                }
         }
+        
         // Hide scrollbars
         if let scrollView = pdfView.enclosingScrollView {
-            scrollView.hasVerticalScroller = false
+            scrollView.hasVerticalScroller = true
             scrollView.hasHorizontalScroller = false
             scrollView.scrollerStyle = .overlay
         }
+        
         return pdfView
     }
 
     func updateNSView(_ nsView: PDFView, context: Context) {
         guard nsView.document?.documentURL != url else { return }
         nsView.document = PDFDocument(url: url)
-        if let page = nsView.document?.page(at: 0) {
-            nsView.go(to: page)
+        adjustZoomToFitWidth(nsView)
+    }
+    
+    private func adjustZoomToFitWidth(_ pdfView: PDFView) {
+        guard let pdfPage = pdfView.document?.page(at: 0),
+              let scrollView = pdfView.enclosingScrollView else { return }
+        
+        let contentWidth = scrollView.contentView.bounds.width
+        let pdfPageBounds = pdfPage.bounds(for: pdfView.displayBox)
+        
+        // Calculate scale factor needed to fit PDF width to view width
+        // Account for some margin to avoid cutting off edges
+        let margin: CGFloat = 20.0
+        let scaleFactor = (contentWidth - margin) / pdfPageBounds.width
+        
+        // Only adjust if we have a reasonable scale factor
+        if scaleFactor > 0 {
+            pdfView.scaleFactor = scaleFactor
         }
     }
 }
