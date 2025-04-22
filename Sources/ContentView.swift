@@ -333,7 +333,7 @@ struct PDFKitView: NSViewRepresentable {
         
         // Calculate scale factor needed to fit PDF width to view width
         // Account for some margin to avoid cutting off edges
-        let margin: CGFloat = 20.0
+        let margin: CGFloat = 30.0
         let scaleFactor = (contentWidth - margin) / pdfPageBounds.width
         
         // Only adjust if we have a reasonable scale factor
