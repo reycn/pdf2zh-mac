@@ -7,11 +7,11 @@
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
 
-<!-- <p align="center">
- 
-</p>   -->
+<p align="center">
+  <img src="./Assets/img/icon.png" alt="animated" width="64"/> 
+</p>  
 
-#  <img src="./Assets/img/icon.png" alt="animated" width="28"/> PDFMathTranslate - Mac Client
+# PDFMathTranslate - Mac Client
 MacOS native application for [PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate).  
 Currently in beta (not stable).  
 
