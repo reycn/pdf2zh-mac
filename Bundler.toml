@@ -2,7 +2,7 @@
 product = 'PDFMathTranslate'
 version = '0.1.beta'
 name = 'PDFMathTranslate'
-icon = './assets/img/icon.png'
+icon = './Assets/img/icon.png'
 
 
 [apps.PDFMathTranslate.plist]
